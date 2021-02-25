@@ -992,10 +992,130 @@ s32 net_close(s32 s)
 	return ret;
 }
 
+// As IOS does not natively provide select-like functionality,
+// we implement one based on poll(2).
+// This implementation should most likely be changed eventually,
+// as it will block for every passed FD the same timeout.
 s32 net_select(s32 maxfdp1, fd_set *readset, fd_set *writeset, fd_set *exceptset, struct timeval *timeout)
 {
-	// not yet implemented
-	return -EINVAL;
+	s32 ret;
+
+	if (net_ip_top_fd < 0) return -ENXIO;
+	if (maxfdp1 > FD_SETSIZE) return -EINVAL;
+
+	// First, we convert our timeout to milliseconds entirely, if possible.
+	// poll is similar to select in which it will block if the timeout is 0.
+	s32 timeout_ms;
+	if (timeout != NULL) {
+		// Add both existing milliseconds and seconds.
+		// Here's to hoping we do not overflow.
+		timeout_ms = timeout->tv_usec;
+		timeout_ms += timeout->tv_sec * 1000;
+	} else {
+		timeout_ms = 0;
+	}
+
+	debug_printf("net_select(%d, read, write, except, %d)\n", maxfdp1, timeout_ms);
+
+	// We then commit multiple mass sins.
+	// We iterate through and find the amount of descriptors actually queried.
+	// This is relatively fast as we have a potential max of 16 file descriptors.
+	#define fd_exists(x, y) (y != NULL && FD_ISSET(x, y) != 0)
+
+	// Any index set to a non-negative value is present.
+	s32 fd_values[FD_SETSIZE];
+	memset(fd_values, -1, sizeof(fd_values));
+
+	// Running count of needed pollsds within array.
+	s32 fd_count = 0;
+
+	// Used to detect if a value is present in our array.
+	#define fd_missing(x) (fd_values[x] == -1)
+	// Used to add our poll masking to our array.
+	#define fd_add_status(x, y) if (fd_missing(x)) fd_values[x] = 0; \
+			fd_values[x] |= y;
+
+	// We must ensure the iterated fd is within at least one set.
+	for (s32 fd_index = 0; fd_index < maxfdp1; fd_index++) {
+		bool added = false;
+
+		if (fd_exists(fd_index, readset)) {
+			fd_add_status(fd_index, POLLIN);
+			added = true;
+		}
+
+		if (fd_exists(fd_index, writeset)) {
+			fd_add_status(fd_index, POLLOUT);
+			added = true;
+		}
+
+		if (fd_exists(fd_index, exceptset)) {
+			// poll(2) will output an error should it detect one.
+			// We do not need to state that we are looking for one.
+			fd_add_status(fd_index, 0);
+			added = true;
+		}
+
+		if (added)
+			fd_count++;
+	}
+
+	// We now know the number of sockets we need to provide a response for.
+	// Set applicable flags.
+	struct pollsd* sds = net_malloc(sizeof(struct pollsd) * fd_count);
+
+	// Used to keep track of convert SDs.
+	s32 sd_count = 0;
+
+	for (s32 fd_index = 0; fd_index < maxfdp1; fd_index++) {
+		if (sd_count == fd_count)
+			// If we have converted all applicable FDs and
+			// exhausted our list, cease operation.
+			break;
+
+		if (fd_missing(fd_index))
+			// If this FD is not accounted for in our array, ignore.
+			continue;
+
+
+		// The current fd_index is the number of our socket.
+		sds[sd_count].socket = fd_index;
+		sds[sd_count].events = fd_values[fd_index];
+
+		sd_count++;
+	}
+
+	ret = net_poll(sds, maxfdp1, timeout_ms);
+	if (ret > 0) {
+		net_free(sds);
+		return ret;
+	}
+
+	// Convert results back
+	fd_set ret_readset;
+	fd_set ret_writeset;
+	fd_set ret_exceptset;
+
+	for (s32 sd_index = 0; sd_index < sd_count; sd_index++) {
+		s32 ret_event = sds[sd_index].revents;
+
+		if ((ret_event & POLLIN) != 0)
+			FD_SET(sd_index, &ret_readset);
+
+		if ((ret_event & POLLOUT) != 0)
+			FD_SET(sd_index, &ret_writeset);
+
+		if (((ret_event & POLLNVAL) != 0) || ((ret_event & POLLERR) != 0))
+			FD_SET(sd_index, &ret_exceptset);
+	}
+
+	*readset = ret_readset;
+	*writeset = ret_writeset;
+	*exceptset = ret_exceptset;
+
+	net_free(sds);
+	return ret;
+}
 }
 
 s32 net_setsockopt(s32 s, u32 level, u32 optname, const void *optval, socklen_t optlen)
