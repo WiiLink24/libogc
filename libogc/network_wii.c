@@ -78,10 +78,10 @@ enum {
 	IOCTL_SO_FCNTL,
 	IOCTL_SO_GETPEERNAME, // todo
 	IOCTL_SO_GETSOCKNAME, // todo
-	IOCTL_SO_GETSOCKOPT,  // todo    8
+	IOCTL_SO_GETSOCKOPT,
 	IOCTL_SO_SETSOCKOPT,
 	IOCTL_SO_LISTEN,
-	IOCTL_SO_POLL,        // todo    b
+	IOCTL_SO_POLL,
 	IOCTLV_SO_RECVFROM,
 	IOCTLV_SO_SENDTO,
 	IOCTL_SO_SHUTDOWN,    // todo    e
@@ -1116,6 +1116,29 @@ s32 net_select(s32 maxfdp1, fd_set *readset, fd_set *writeset, fd_set *exceptset
 }
 	return ret;
 }
+
+s32 net_getsockopt(s32 s, u32 level, u32 optname, const void *optval, socklen_t *optlen)
+{
+	s32 ret;
+	STACK_ALIGN(struct setsockopt_params,params,1,32);
+
+	if (net_ip_top_fd < 0) return -ENXIO;
+	if (*optlen < 0 || *optlen > 20) return -EINVAL;
+
+
+	memset(params, 0, sizeof(struct setsockopt_params));
+	params->socket = s;
+	params->level = level;
+	params->optname = optname;
+	params->optlen = *optlen;
+
+	ret = _net_convert_error(IOS_Ioctl(net_ip_top_fd, IOCTL_SO_GETSOCKOPT, NULL, 0, params, sizeof(struct setsockopt_params)));
+
+	*optlen = params->optlen;
+	optval = params->optval;
+
+	debug_printf("net_getsockopt(%d, %u, %u, %p, %d)=%d\n",	s, level, optname, optval, *optlen, ret);
+	return ret;
 }
 
 s32 net_setsockopt(s32 s, u32 level, u32 optname, const void *optval, socklen_t optlen)
