@@ -994,8 +994,6 @@ s32 net_close(s32 s)
 
 // As IOS does not natively provide select-like functionality,
 // we implement one based on poll(2).
-// This implementation should most likely be changed eventually,
-// as it will block for every passed FD the same timeout.
 s32 net_select(s32 maxfdp1, fd_set *readset, fd_set *writeset, fd_set *exceptset, struct timeval *timeout)
 {
 	s32 ret;
@@ -1014,8 +1012,6 @@ s32 net_select(s32 maxfdp1, fd_set *readset, fd_set *writeset, fd_set *exceptset
 	} else {
 		timeout_ms = 0;
 	}
-
-	debug_printf("net_select(%d, read, write, except, %d)\n", maxfdp1, timeout_ms);
 
 	// We then commit multiple mass sins.
 	// We iterate through and find the amount of descriptors actually queried.
@@ -1086,7 +1082,7 @@ s32 net_select(s32 maxfdp1, fd_set *readset, fd_set *writeset, fd_set *exceptset
 	}
 
 	ret = net_poll(sds, maxfdp1, timeout_ms);
-	if (ret > 0) {
+	if (ret < 0) {
 		net_free(sds);
 		return ret;
 	}
@@ -1114,6 +1110,10 @@ s32 net_select(s32 maxfdp1, fd_set *readset, fd_set *writeset, fd_set *exceptset
 	*exceptset = ret_exceptset;
 
 	net_free(sds);
+
+	debug_printf("net_select(%d, read, write, except, %d)=%d\n", maxfdp1, timeout_ms, ret);
+	return ret;
+}
 	return ret;
 }
 }
