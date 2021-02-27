@@ -1114,8 +1114,6 @@ s32 net_select(s32 maxfdp1, fd_set *readset, fd_set *writeset, fd_set *exceptset
 	debug_printf("net_select(%d, read, write, except, %d)=%d\n", maxfdp1, timeout_ms, ret);
 	return ret;
 }
-	return ret;
-}
 
 s32 net_getsockopt(s32 s, u32 level, u32 optname, const void *optval, socklen_t *optlen)
 {
